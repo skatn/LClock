@@ -5,6 +5,13 @@
 #include <DNSServer.h>
 #include <ESPAsyncTCP.h>
 #include <ESPAsyncWebServer.h>
+#include <EEPROM.h>
+
+
+/*--CDS--*/
+#define CDS_PIN     A0
+#define LPF_ALPHA 0.8
+int cdsValue = 0;
 
 /*--74HC595D--*/
 #define SER_PIN     12
@@ -15,7 +22,7 @@ uint64_t bitRegister = 0;
 
 
 /*--LED--*/
-#define DEFAULT_BRIGHTNESS  716   //70% brightness
+#define DEFAULT_BRIGHTNESS  70
 byte numberToBit[] = {
   0xDE,   //0, 1101 1110
   0xC0,   //1, 1100 0000
@@ -28,9 +35,14 @@ byte numberToBit[] = {
   0xFE,   //8, 1111 1110
   0xFA,   //9, 1111 1010
 };
-uint8_t brightness = DEFAULT_BRIGHTNESS;
+int brightness = DEFAULT_BRIGHTNESS;
 int autoBrightness = 0;
 boolean colonState = LOW;
+
+/*--TIME--*/
+int rawTime = 0;
+int currTime = 0;
+unsigned int timeOffset = 32400;
 
 
 /*--WIFI--*/
@@ -40,17 +52,42 @@ const char* passwordAP = "1234567890";
 boolean wifiConnectOK = false;
 
 WiFiUDP udp;
-NTPClient timeClient(udp, "kr.pool.ntp.org", 32400, 10000);  //60m*60s*1000ms
+NTPClient timeClient(udp, "kr.pool.ntp.org", timeOffset, 3600000);  //60m*60s*1000ms
 
 AsyncWebServer server(80);
 DNSServer dns;
 
 
-/*--TIME--*/
-int currTime = 0;
+/*--setting--*/
+enum {PASSIVITY=0, BY_TIME, BY_CDS};
 boolean hour12 = true;
+boolean showAMPM = true;
+int brightMode = PASSIVITY;
+#define BRIGHTNESS_MAX  100
+#define BRIGHTNESS_MIN  10
 
 
+/*--EEPROM--*/
+#define ADDR_HOUR12       0x10
+#define ADDR_BRIGHT_MODE  0x11
+#define ADDR_BRIGHTNESS   0x12
+#define ADDR_COLON        0x13
+
+
+void eepromInit(){
+  EEPROM.begin(4096);
+  hour12 = EEPROM.read(ADDR_HOUR12);
+  brightMode = EEPROM.read(ADDR_BRIGHT_MODE);
+  if((brightMode != PASSIVITY) && (brightMode != BY_TIME) && (brightMode != BY_CDS)){
+    brightMode = PASSIVITY;
+  }
+
+  brightness = EEPROM.read(ADDR_BRIGHTNESS);
+  if(brightness < BRIGHTNESS_MIN) brightness = BRIGHTNESS_MIN;
+  else if(brightness > BRIGHTNESS_MAX) brightness = BRIGHTNESS_MAX;
+
+  showAMPM = EEPROM.read(ADDR_COLON);
+}
 
 
 void ntpConnect(){
@@ -74,42 +111,69 @@ void serverInit(){
   Serial.println(WiFi.softAPIP());
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-      request->send(200, "text/plain", "Hello, world");
+    request->send(200, "text/plain", "Hello, world");
   });
 
   // Send a GET request to <IP>/get?message=<message>
   /*server.on("/get", HTTP_GET, [] (AsyncWebServerRequest *request) {
-      String message;
-      if (request->hasParam(PARAM_MESSAGE)) {
-          message = request->getParam(PARAM_MESSAGE)->value();
-      } else {
-          message = "No message sent";
-      }
-      request->send(200, "text/plain", "Hello, GET: " + message);
+    String message;
+    if (request->hasParam(PARAM_MESSAGE)) {
+      message = request->getParam(PARAM_MESSAGE)->value();
+    } else {
+      message = "No message sent";
+    }
+    request->send(200, "text/plain", "Hello, GET: " + message);
   });*/
 
   // Send a POST request to <IP>/post with a form field message set to <message>
   server.on("/post", HTTP_POST, [](AsyncWebServerRequest *request){
-      String message;
-      if (request->hasParam("first_request", true)) {
-          //message = 
-      }
-      else if(request->hasParam("brightness", true)){
-          message = request->getParam("brightness", true)->value();
-      }
-      else {
-          message = "No message sent";
-      }
-      request->send(200, "text/plain", message);
+    String message;
+    if (request->hasParam("sync_request", true)) {
+      message = String(rawTime)+","+String(timeOffset)+","+String(hour12)+","+String(showAMPM)+","+String(brightMode)+","+String(brightness);
+    }
+    else if(request->hasParam("time_request", true)) {
+      message = String(rawTime);
+    }
+    else if(request->hasParam("set_hour_mode", true)){
+      hour12 = request->getParam("set_hour_mode", true)->value().toInt();
+      message = "success";
+    }
+    else if(request->hasParam("set_colon_mode", true)){
+      showAMPM = request->getParam("set_colon_mode", true)->value().toInt();
+      message = "success";
+    }
+    else if(request->hasParam("set_bright_mode", true)){
+      //String data = request->getParam("set_bright_mode", true)->value();
+      brightMode = request->getParam("set_bright_mode", true)->value().toInt();
+      //brightMode = data.toInt();
+      message = "success";
+    }
+    else if(request->hasParam("set_brightness", true)){
+      String data = request->getParam("set_brightnesstness", true)->value();
+      brightness = data.toInt();
+      message = "success";
+    }
+    else if(request->hasParam("set_time", true)){
+      String data = request->getParam("set_time", true)->value();
+      timeOffset = data.toInt();
+      message = "success";
+    }
+    else {
+      message = "No message sent";
+    }
+    request->send(200, "text/plain", message);
   });
   
-  server.onNotFound(notFound);
+  //server.onNotFound(notFound);
+  server.onNotFound([](AsyncWebServerRequest *request){
+    request->send(404, "text/plain", "Not found");
+  });
   server.begin();
 }
 
 
 void notFound(AsyncWebServerRequest *request) {
-    request->send(404, "text/plain", "Not found");
+  request->send(404, "text/plain", "Not found");
 }
 
 
@@ -121,7 +185,7 @@ boolean updateTime(){
   int currMin = timeClient.getMinutes();
   if(prevMin != currMin){
     prevMin = currMin;
-    currTime = timeClient.getHours()*100 + currMin;
+    rawTime = currTime = timeClient.getHours()*100 + currMin;
     if(hour12 && currTime > 1259) currTime -= 1200;
 
     return true;
@@ -172,20 +236,19 @@ void showSegment(){
 }
 
 void getCDS(){
-  #define alpha 0.9
-  static int value = 0;
   static unsigned long prevSampleTime = 0;
   
   unsigned long currSampleTime = millis();
-  if(currSampleTime - prevSampleTime > 10){
+  if(currSampleTime - prevSampleTime > 100){
     prevSampleTime = currSampleTime;
     
-    value = alpha*value + (1.0-alpha)*analogRead(A0);
-    Serial.println(value);
+    cdsValue = LPF_ALPHA*cdsValue + (1.0-LPF_ALPHA)*analogRead(CDS_PIN);
   }
 }
 
-
+void setBrightness(byte value){
+  analogWrite(PWM_PIN, 1024-(1024*value/100));
+}
 
 void setup() {
   delay(1000);
@@ -195,17 +258,17 @@ void setup() {
   pinMode(SCK_PIN, OUTPUT);
 
   pinMode(PWM_PIN, OUTPUT);
+  pinMode(CDS_PIN, INPUT);
+  
+  eepromInit();
+  setBrightness(brightness);
   
   showSegment();
   ntpConnect();
   serverInit();
-  
-  analogWrite(PWM_PIN, 1023-brightness);
 }
 
 void loop() {
-  getCDS();
-  
   if(updateTime()){
     if(hour12){
       if(currTime > 1259) currTime -= 1200;
@@ -234,5 +297,17 @@ void loop() {
       setColon(colonState);
     }
     showSegment();
+  }
+
+  switch(brightMode){
+    case PASSIVITY:
+      setBrightness(brightness);
+      break;
+    case BY_TIME:
+      break;
+    case BY_CDS:
+      getCDS();
+      setBrightness(map(cdsValue, 0, 1023, 0, 100));
+      break;
   }
 }
