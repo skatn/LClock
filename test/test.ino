@@ -83,9 +83,9 @@ void eepromInit(){
     brightMode = PASSIVITY;
   }
 
-  //brightness = EEPROM.read(ADDR_BRIGHTNESS);
-  //if(brightness < BRIGHTNESS_MIN) brightness = BRIGHTNESS_MIN;
-  //else if(brightness > BRIGHTNESS_MAX) brightness = BRIGHTNESS_MAX;
+  brightness = EEPROM.read(ADDR_BRIGHTNESS);
+  if(brightness < BRIGHTNESS_MIN) brightness = BRIGHTNESS_MIN;
+  else if(brightness > BRIGHTNESS_MAX) brightness = BRIGHTNESS_MAX;
 
   showAMPM = EEPROM.read(ADDR_COLON);
 }
@@ -105,7 +105,6 @@ void ntpConnect(){
 
 
 void serverInit(){
-  const char* PARAM_MESSAGE = "message";
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(ssidAP, passwordAP);
   Serial.print(F("\n\nIP : "));
@@ -130,8 +129,9 @@ void serverInit(){
   server.on("/post", HTTP_POST, [](AsyncWebServerRequest *request){
     String message;
     if (request->hasParam("sync_request", true)) {
-      message = String(rawTime)+","+String(timeOffset)+","+String(hour12)+","+String(showAMPM)+","+String(brightMode)+","+String(brightness);
-    }
+      //message = String(rawTime)+","+String(timeOffset)+","+String(hour12)+","+String(showAMPM)+","+String(brightMode)+","+String(brightness);
+      message = "SYNC";
+    }/*
     else if(request->hasParam("time_request", true)) {
       message = String(rawTime);
     }
@@ -166,13 +166,12 @@ void serverInit(){
       String data = request->getParam("set_time", true)->value();
       timeOffset = data.toInt();
       Serial.println("set time : " + data);
-      timeClient.setTimeOffset(timeOffset);
       isChanged = true;
-      message = "offset:"+String(timeOffset);
+      message = "success";
     }
     else {
       message = "No message sent";
-    }
+    }*/
     request->send(200, "text/plain", message);
   });
   
@@ -302,28 +301,5 @@ void loop() {
     if(WiFi.status() != WL_CONNECTED){
       wifiConnectOK = false;
     }
-  }
-
-  if(tick_tock()){
-    if(wifiConnectOK == true){
-      setColon(HIGH);
-    }
-    else{
-      colonState = !colonState;
-      setColon(colonState);
-    }
-    showSegment();
-  }
-
-  switch(brightMode){
-    case PASSIVITY:
-      setBrightness(brightness);
-      break;
-    case BY_TIME:
-      break;
-    case BY_CDS:
-      getCDS();
-      setBrightness(map(cdsValue, 0, 1023, 0, 100));
-      break;
   }
 }
