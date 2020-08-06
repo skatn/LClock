@@ -156,7 +156,7 @@ void serverInit(){
       message = "success";
     }
     else if(request->hasParam("set_brightness", true)){
-      String data = request->getParam("set_brightnesstness", true)->value();
+      String data = request->getParam("set_brightness", true)->value();
       brightness = data.toInt();
       Serial.println("set time : " + data);
       isChanged = true;
