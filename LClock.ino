@@ -254,7 +254,8 @@ void getCDS(){
   if(currSampleTime - prevSampleTime > 100){
     prevSampleTime = currSampleTime;
     
-    cdsValue = LPF_ALPHA*cdsValue + (1.0-LPF_ALPHA)*analogRead(CDS_PIN);
+    cdsValue = (1.0-LPF_ALPHA)*cdsValue + LPF_ALPHA*analogRead(CDS_PIN);
+    Serial.println(cdsValue);
   }
 }
 
@@ -326,4 +327,6 @@ void loop() {
       setBrightness(map(cdsValue, 0, 1023, 0, 100));
       break;
   }
+  
+      getCDS();
 }
