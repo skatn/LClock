@@ -9,9 +9,14 @@
 
 
 /*--CDS--*/
-#define CDS_PIN     A0
-#define LPF_ALPHA 0.8
+#define RANGE_UPDATE_TIME   60000  
+#define CDS_MARGIN          10
+#define CDS_BUFF_MARGIN    30
+#define CDS_PIN             A0
+#define LPF_ALPHA           0.8
 int cdsValue = 0;
+uint16_t cdsMin = 500, cdsMax = 900;
+uint16_t cdsMinBuff = 1024, cdsMaxBuff = 0;
 
 /*--74HC595D--*/
 #define SER_PIN     12
@@ -219,13 +224,19 @@ boolean tick_tock(){
 
 void setColon(boolean state){
   if(state){
-    bitRegister |= (1 << 8) | (1 << 16);
+    if(showAMPM){
+      if(rawTime%100 >= 12) bitRegister |= (1 << 8);
+      else bitRegister |= (1 << 16);
+    }
+    else bitRegister |= (1 << 8) | (1 << 16);
   }
   else{
     bitRegister &= ~((1 << 8) | (1 << 16));
   }
 }
+
 void setSegment(uint8_t first, uint8_t second, uint8_t third, uint8_t forth){
+  bitRegister &= (1 << 8) | (1 << 16);
   bitRegister |= first << 24;
   bitRegister |= second << 16;
   bitRegister |= third << 8;
@@ -248,21 +259,51 @@ void showSegment(){
 }
 
 void getCDS(){
-  static unsigned long prevSampleTime = 0;
+  static unsigned long prevSampleTime = 0, minTime = 0, maxTime = 0, minBuffTime = 0, maxBuffTime = 0;
   
   unsigned long currSampleTime = millis();
   if(currSampleTime - prevSampleTime > 100){
     prevSampleTime = currSampleTime;
     
     cdsValue = (1.0-LPF_ALPHA)*cdsValue + LPF_ALPHA*analogRead(CDS_PIN);
-    Serial.println(cdsValue);
+
+    if((cdsValue < (cdsMin-CDS_MARGIN)) && minTime==0) minTime = currSampleTime;
+    else minTime = 0;
+    if((cdsValue > (cdsMax+CDS_MARGIN)) && maxTime==0) maxTime = currSampleTime;
+    else maxTime = 0;
+
+    if(currSampleTime - minTime > RANGE_UPDATE_TIME){
+      cdsMin = cdsValue;
+    }
+    if(currSampleTime - maxTime > RANGE_UPDATE_TIME){
+      cdsMAx = cdsValue;
+    }
+
+    
+    if((cdsValue < (cdsMinBuff-CDS_BUFF_MARGIN)) && minBuffTime==0) minBuffTime = currSampleTime;
+    else minBuffTime = 0;
+    if((cdsValue > (cdsMaxBuff+CDS_BUFF_MARGIN)) && maxBuffTime==0) maxBuffTime = currSampleTime;
+    else maxBuffTime = 0;
+
+    if(currSampleTime - minBuffTime > 86400000UL){   //86400000 = 1Day (1000ms * 60s * 60m * 24h)
+      cdsMin = cdsValue;
+    }
+    if(currSampleTime - maxBuffTime > 86400000UL){   //86400000 = 1Day (1000ms * 60s * 60m * 24h)
+      cdsMax = cdsValue;
+    }
   }
+}
+
+void cdsBrightness(){
+  int buff = cdsValue;
+  if(buff < cdsMin) buff = cdsMin;
+  else if(buff > cdsMax) buff = cdsMax;
+  
+  setBrightness(map(cdsValue, cdsMin, cdsMax, 10, 100));
 }
 
 void setBrightness(int value){
   analogWrite(PWM_PIN, 1024.0-(1024.0*value/100.0));
-  //analogWrite(PWM_PIN, 1000);
-  //analogWrite(PWM_PIN, value);
 }
 
 void setup() {
@@ -277,7 +318,7 @@ void setup() {
 
   analogWriteFreq(21000);
   
-  eepromInit();
+//  eepromInit();
   setBrightness(brightness);
   
   showSegment();
@@ -286,6 +327,7 @@ void setup() {
 }
 
 void loop() {
+  //time updated
   if(updateTime()){
     if(hour12){
       if(currTime > 1259) currTime -= 1200;
@@ -297,7 +339,7 @@ void loop() {
       buff = buff%int(pow(10.0, 3.0-i));
     }
 
-    bitRegister = 0;
+//    bitRegister = 0;
     setSegment(n[0]==0? 0 : numberToBit[n[0]], numberToBit[n[1]], numberToBit[n[2]], numberToBit[n[3]]);
 
     if(WiFi.status() != WL_CONNECTED){
@@ -305,6 +347,7 @@ void loop() {
     }
   }
 
+  //every second
   if(tick_tock()){
     if(wifiConnectOK == true){
       setColon(HIGH);
@@ -316,6 +359,9 @@ void loop() {
     showSegment();
   }
 
+
+  //always
+  getCDS();
   switch(brightMode){
     case PASSIVITY:
       setBrightness(brightness);
@@ -323,10 +369,7 @@ void loop() {
     case BY_TIME:
       break;
     case BY_CDS:
-      getCDS();
-      setBrightness(map(cdsValue, 0, 1023, 0, 100));
+      cdsBrightness();
       break;
   }
-  
-      getCDS();
 }
