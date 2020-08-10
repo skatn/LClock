@@ -276,7 +276,7 @@ void getCDS(){
       cdsMin = cdsValue;
     }
     if(currSampleTime - maxTime > RANGE_UPDATE_TIME){
-      cdsMAx = cdsValue;
+      cdsMax = cdsValue;
     }
 
     
