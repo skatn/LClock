@@ -80,6 +80,13 @@ boolean isChanged = false;
 #define ADDR_COLON        0x13
 
 
+unsigned long diff(unsigned long now, unsigned long prev, unsigned long d)
+{
+  if (now>prev) return now-prev;
+  else return 0xFFFFFFFF-prev+now+1;
+}
+
+
 void eepromInit(){
   EEPROM.begin(4096);
   hour12 = EEPROM.read(ADDR_HOUR12);
@@ -121,16 +128,56 @@ void serverInit(){
   });
 
   // Send a GET request to <IP>/get?message=<message>
-  /*server.on("/get", HTTP_GET, [] (AsyncWebServerRequest *request) {
+  server.on("/get", HTTP_GET, [] (AsyncWebServerRequest *request) {
     String message;
-    if (request->hasParam(PARAM_MESSAGE)) {
-      message = request->getParam(PARAM_MESSAGE)->value();
-    } else {
+    if (request->hasParam("sync_request")) {
+      message = message = String(rawTime)+","+String(timeOffset)+","+String(hour12)+","+String(showAMPM)+","+String(brightMode)+","+String(brightness);
+    }
+    else if(request->hasParam("time_request")) {
+      message = String(rawTime);
+    }
+    else if(request->hasParam("set_hour_mode")){
+      int buff = request->getParam("set_hour_mode")->value().toInt();
+      isHour24 = buff;
+      Serial.print("set hour mode : "); Serial.println(buff);
+      isChanged = true;
+      message = "success";
+    }
+    else if(request->hasParam("set_colon_mode")){
+      int buff = request->getParam("set_hour_mode")->value().toInt();
+      showAMPM = buff;
+      Serial.print("set colon mode : "); Serial.println(buff);
+      isChanged = true;
+      message = "success";
+    }
+    else if(request->hasParam("set_bright_mode")){
+      brightMode = request->getParam("set_bright_mode")->value().toInt();
+      //brightMode = data.toInt();
+      message = "success";
+    }
+    else if(request->hasParam("set_brightness")){
+      String data = request->getParam("set_brightness")->value();
+      brightness = data.toInt();
+      Serial.println("set time : " + data);
+      isChanged = true;
+      message = "success";
+    }
+    else if(request->hasParam("set_time")){
+      String data = request->getParam("set_time")->value();
+      timeOffset = data.toInt();
+      Serial.println("set time : " + data);
+      timeClient.setTimeOffset(timeOffset);
+      isChanged = true;
+      message = "offset:"+String(timeOffset);
+    }
+    else {
       message = "No message sent";
     }
+    
     request->send(200, "text/plain", "Hello, GET: " + message);
-  });*/
-
+  });
+  
+  /*
   // Send a POST request to <IP>/post with a form field message set to <message>
   server.on("/post", HTTP_POST, [](AsyncWebServerRequest *request){
     String message;
@@ -179,21 +226,13 @@ void serverInit(){
       message = "No message sent";
     }
     request->send(200, "text/plain", message);
-  });
+  });*/
   
-  //server.onNotFound(notFound);
   server.onNotFound([](AsyncWebServerRequest *request){
     request->send(404, "text/plain", "Not found");
   });
   server.begin();
 }
-
-
-void notFound(AsyncWebServerRequest *request) {
-  request->send(404, "text/plain", "Not found");
-}
-
-
 
 boolean updateTime(){
   static int prevMin = 0;
@@ -262,7 +301,7 @@ void getCDS(){
   static unsigned long prevSampleTime = 0, minTime = 0, maxTime = 0, minBuffTime = 0, maxBuffTime = 0;
   
   unsigned long currSampleTime = millis();
-  if(currSampleTime - prevSampleTime > 100){
+  if(diff(currSampleTime, prevSampleTime) > 100){
     prevSampleTime = currSampleTime;
     
     cdsValue = (1.0-LPF_ALPHA)*cdsValue + LPF_ALPHA*analogRead(CDS_PIN);
@@ -285,10 +324,10 @@ void getCDS(){
     if((cdsValue > (cdsMaxBuff+CDS_BUFF_MARGIN)) && maxBuffTime==0) maxBuffTime = currSampleTime;
     else maxBuffTime = 0;
 
-    if(currSampleTime - minBuffTime > 86400000UL){   //86400000 = 1Day (1000ms * 60s * 60m * 24h)
+    if(diff(currSampleTime, minBuffTime) > 86400000UL){   //86400000 = 1Day (1000ms * 60s * 60m * 24h)
       cdsMin = cdsValue;
     }
-    if(currSampleTime - maxBuffTime > 86400000UL){   //86400000 = 1Day (1000ms * 60s * 60m * 24h)
+    if(diff(currSampleTime, maxBuffTime) > 86400000UL){   //86400000 = 1Day (1000ms * 60s * 60m * 24h)
       cdsMax = cdsValue;
     }
   }
